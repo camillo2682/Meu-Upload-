@@ -352,12 +352,20 @@ function render(items){
   });
 }
 
+function withTimeout(promise, ms, label){
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Tempo esgotado: ${label}`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 async function handleFiles(files){
   let user;
   try{
-    const res = await supabase.auth.getUser();
+    const res = await withTimeout(supabase.auth.getSession(), 8000, 'verificar sessão');
     if(res.error) throw res.error;
-    user = res.data.user;
+    user = res.data.session ? res.data.session.user : null;
     if(!user) throw new Error('Sessão não encontrada — faça login novamente.');
   }catch(err){
     toast('Erro de sessão: ' + (err.message || err), 'err');
@@ -370,11 +378,15 @@ async function handleFiles(files){
     document.getElementById('dz-title').textContent = 'Guardando...';
     try{
       const path = `${user.id}/${Date.now()}_${file.name}`;
-      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, file);
+      const { error: upErr } = await withTimeout(
+        supabase.storage.from(BUCKET).upload(path, file), 15000, 'enviar arquivo'
+      );
       if(upErr) throw upErr;
-      const { error: dbErr } = await supabase.from('files').insert({
-        user_id: user.id, name: file.name, size: file.size, type: file.type, storage_path: path
-      });
+      const { error: dbErr } = await withTimeout(
+        supabase.from('files').insert({
+          user_id: user.id, name: file.name, size: file.size, type: file.type, storage_path: path
+        }), 8000, 'salvar registro'
+      );
       if(dbErr) throw dbErr;
       toast(`"${file.name}" guardado`, 'ok');
     }catch(err){
